@@ -8,7 +8,7 @@ import faiss
 from torch.nn.utils.rnn import pad_sequence
 import numpy as np
 import pandas as pd
-from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaForMaskedLM, get_linear_schedule_with_warmup
+from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaModel, get_linear_schedule_with_warmup
 from torch.utils.data import DataLoader
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 from dataloader import MyDataset
@@ -37,6 +37,8 @@ args = parser.parse_args()
 datasetColumns = None
 dataDir = None
 numSampleRetrieve = None
+k=3
+LB = 128
 if args.data == 'walmart_amazon_exp':
     datasetColumns = ['title', 'category', 'brand', 'modelno', 'price']
     dataDir = 'data/walmart_amazon_exp/'
@@ -49,10 +51,15 @@ elif args.data == 'dblp_acm_exp':
     datasetColumns = ['title', 'authors', 'venue', 'year']
     dataDir = 'data/dblp_acm_exp/'
     numSampleRetrieve = 2294
+elif args.data == 'abt_buy_exp':
+    datasetColumns = ['name', 'description', 'price']
+    dataDir = 'data/abt_buy_exp/'
+    numSampleRetrieve = 1091
+    k=20
 elif args.data == 'dblp_scholar_exp':
     datasetColumns = ['title', 'authors', 'venue', 'year']
     dataDir = 'data/dblp_scholar_exp/'
-    numSampleRetrieve = 2294
+    numSampleRetrieve = 64263
 else:
     exit(1)
 
@@ -62,7 +69,7 @@ torch.manual_seed(0)
 np.random.seed(0)
 indices = np.loadtxt(dataDir + args.indices, delimiter=',').astype(int)
 numEmbeddings = args.numEmbeddings
-len_indices = len(indices)//128
+len_indices = len(indices)//LB
 
 class MyPairedDataset(MyDataset):
     def __init__(self, file_path, indices, tokenizer, datasetColumns):
@@ -191,13 +198,11 @@ class Model(nn.Module):
     def __init__(self, numEmbeddings):
         super(Model, self).__init__()
         self.numEmbeddings = numEmbeddings
-        self.transformer = RobertaForMaskedLM(config=config)
-        self.transformer.load_state_dict(torch.load("roberta-base/pytorch_model.bin"), strict=False)
+        self.transformer = RobertaModel(config=config).from_pretrained('roberta-base', config=config)
         self.transformer.train()
         self.fc = nn.ModuleList([RobertaClassificationHead() for i in range(numEmbeddings)])
-        self.fin = nn.ModuleList([nn.Linear(3*768, 2) for i in range(numEmbeddings)])
         self.fc_paired = PairedRobertaClassificationHead()
-        for param in self.transformer.roberta.parameters():
+        for param in self.transformer.parameters():
             param.requires_grad = True
         
     def forward_unpaired(self, x, y):
@@ -206,8 +211,8 @@ class Model(nn.Module):
             y = y.cuda()
             attn_x = (x != tokenizer.pad_token_id).float().cuda()
             attn_y = (y != tokenizer.pad_token_id).float().cuda()
-            embed_x = self.transformer.roberta(input_ids = x, attention_mask=attn_x)[0]
-            embed_y = self.transformer.roberta(input_ids = y, attention_mask=attn_y)[0]
+            embed_x = self.transformer(input_ids = x, attention_mask=attn_x)[0]
+            embed_y = self.transformer(input_ids = y, attention_mask=attn_y)[0]
             embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
             embed_y = (embed_y*attn_y.unsqueeze(-1)).sum(1)/attn_y.unsqueeze(-1).sum(1)
         embeddings_x = []
@@ -221,7 +226,7 @@ class Model(nn.Module):
     def forward_paired(self, x):
         x = x.cuda()
         attn_x = (x != tokenizer.pad_token_id).float().cuda()
-        embed_x = self.transformer.roberta(input_ids = x, attention_mask=attn_x)[0]
+        embed_x = self.transformer(input_ids = x, attention_mask=attn_x)[0]
         embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
         return self.fc_paired(embed_x)
 
@@ -257,8 +262,7 @@ for epoch in range(pairedEpochs):
         paired_scheduler.step()
 
 
-optimizer = AdamW([{'params':model.fc.parameters()},
-                  {'params':model.fin.parameters()}], lr=1e-3)
+optimizer = AdamW(model.fc.parameters(), lr=1e-3)
 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps = len(train_loader) * numEpochs)
 for epoch in range(numEpochs):
     negdataloader_iterator = iter(neg_loader)
@@ -292,7 +296,7 @@ for idx in range(0, len(dataset.xexamples), 16):
     x = dataset.xexamples[idx:idx+16]
     x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
     attn_x = (x != tokenizer.pad_token_id).float().cuda()
-    embed_x = model.transformer.roberta(input_ids = x, attention_mask=attn_x)[0]
+    embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
     embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
     for i in range(numEmbeddings):
         xEmbeddings[i].extend(model.fc[i](embed_x))
@@ -307,7 +311,7 @@ for idx in range(0, len(dataset.yexamples), 16):
     x = dataset.yexamples[idx:idx+16]
     x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
     attn_x = (x != tokenizer.pad_token_id).float().cuda()
-    embed_x = model.transformer.roberta(input_ids = x, attention_mask=attn_x)[0]
+    embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
     embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
     for i in range(numEmbeddings):
         xEmbeddings[i].extend(model.fc[i](embed_x))
@@ -320,7 +324,6 @@ if args.norm:
     yEmb = yEmb/np.linalg.norm(yEmb, axis=-1)[:, :, np.newaxis]
 Ds = []
 Is = []
-k = 3
 if args.method == 'l2':
     func = faiss.IndexFlatL2
 elif args.method == 'l1':
@@ -352,7 +355,7 @@ out = np.stack([X, Y], -1)
 out = list(map(tuple, out.tolist()))
 seen = set()
 seen_add = seen.add
-out = [x for x in out if not (x in seen or seen_add(x))][:3*numSampleRetrieve]
+out = [x for x in out if not (x in seen or seen_add(x))][:k*numSampleRetrieve]
 np.savetxt(dataDir + args.indices+'CandidateSet'+str(len_indices), np.array(out), fmt='%d,%d')
 indices_out = [i for i in out if i not in indices]
 def evaluate(matches, ranklist):
@@ -378,5 +381,5 @@ for (x, _) in loader:
 out = np.array(out)
 entropy = -(out[:, 0]*np.log(out[:, 0]) + out[:, 1]*np.log(out[:, 1]))
 ent_indices = np.argsort(entropy)[::-1]
-data = indices[ent_indices[:128]]
+data = indices[ent_indices[:LB]]
 np.savetxt(dataDir + args.out, data, fmt='%d,%d')

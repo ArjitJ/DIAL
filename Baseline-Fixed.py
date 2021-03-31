@@ -10,8 +10,10 @@ import numpy as np
 import pandas as pd
 from torch.utils.data import DataLoader
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
-from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaForMaskedLM, get_linear_schedule_with_warmup
+from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaModel, get_linear_schedule_with_warmup
 from dataloader import MyDataset
+from statistics import mean
+
 config = RobertaConfig(
     vocab_size=50265,
     max_position_embeddings=514,
@@ -40,6 +42,9 @@ parser.add_argument("--method", type=str, choices=['l2', 'l1', 'cosine'], defaul
 args = parser.parse_args()
 datasetColumns = None
 dataDir = None
+k=3
+LB = 128
+BATCH_SIZE = 16
 if args.data == 'walmart_amazon_exp':
     datasetColumns = ['title', 'category', 'brand', 'modelno', 'price']
     dataDir = 'data/walmart_amazon_exp/'
@@ -52,9 +57,15 @@ elif args.data == 'dblp_acm_exp':
     datasetColumns = ['title', 'authors', 'venue', 'year']
     dataDir = 'data/dblp_acm_exp/'
     numSampleRetrieve = 2294
-elif args.data == 'dblp_scholar':
+elif args.data == 'abt_buy_exp':
+    datasetColumns = ['name', 'description', 'price']
+    dataDir = 'data/abt_buy_exp/'
+    numSampleRetrieve = 1091
+    k=20
+elif args.data == 'dblp_scholar_exp':
     datasetColumns = ['title', 'authors', 'venue', 'year']
-    dataDir = 'data/dblp_scholar/'
+    dataDir = 'data/dblp_scholar_exp/'
+    numSampleRetrieve = 64263
 else:
     exit(1)
 
@@ -66,7 +77,7 @@ indices = np.array(list(out)).astype(int)
 numEmbeddings = args.numEmbeddings
 torch.manual_seed(0)
 np.random.seed(0)
-len_indices = len(indices)//128
+len_indices = len(indices)//LB
 
 class MyPairedDataset(MyDataset):
     def __init__(self, file_path, indices, tokenizer, datasetColumns):
@@ -174,21 +185,20 @@ class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
         self.transformer = RobertaForMaskedLM(config=config)
-        self.transformer.load_state_dict(torch.load(args.model_init+"/pytorch_model.bin"), strict=False)
         self.transformer.train()
         self.fc = RobertaClassificationHead()
-        for param in self.transformer.roberta.parameters():
+        for param in self.transformer.parameters():
             param.requires_grad = True
         
     def forward(self, x):
         x = x.cuda()
         attn_x = (x != tokenizer.pad_token_id).float().cuda()
-        embed_x = self.transformer.roberta(input_ids = x, attention_mask=attn_x)[0]
+        embed_x = self.transformer(input_ids = x, attention_mask=attn_x)[0]
         embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
         return self.fc(embed_x)
 
 dataset = MyPairedDataset(dataDir, indices, tokenizer, datasetColumns)
-train_loader = DataLoader(dataset, batch_size=16, shuffle=True, collate_fn = collate_fn)
+train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn)
 
 criterion = nn.CrossEntropyLoss()
 numEpochs = 20
@@ -199,21 +209,21 @@ model = Model().cuda()
 model.eval()
 torch.set_grad_enabled(False)
 xEmbeddings = []
-for idx in range(0, len(dataset.xexamples), 16):
-    x = dataset.xexamples[idx:idx+16]
+for idx in range(0, len(dataset.xexamples), BATCH_SIZE):
+    x = dataset.xexamples[idx:idx+BATCH_SIZE]
     x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
     attn_x = (x != tokenizer.pad_token_id).float().cuda()
-    embed_x = model.transformer.roberta(input_ids = x, attention_mask=attn_x)[0]
+    embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
     embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
     xEmbeddings.extend(embed_x)
 xEmb = torch.stack(xEmbeddings).cpu().numpy()
 
 xEmbeddings = []
-for idx in range(0, len(dataset.yexamples), 16):
-    x = dataset.yexamples[idx:idx+16]
+for idx in range(0, len(dataset.yexamples), BATCH_SIZE):
+    x = dataset.yexamples[idx:idx+BATCH_SIZE]
     x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
     attn_x = (x != tokenizer.pad_token_id).float().cuda()
-    embed_x = model.transformer.roberta(input_ids = x, attention_mask=attn_x)[0]
+    embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
     embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
     xEmbeddings.extend(embed_x)
 yEmb = torch.stack(xEmbeddings).cpu().numpy()
@@ -223,7 +233,6 @@ if args.norm:
     yEmb = yEmb/np.linalg.norm(yEmb, axis=-1)[:, np.newaxis]
 Ds = []
 Is = []
-k = 3
 if args.method == 'l2':
     func = faiss.IndexFlatL2
 elif args.method == 'l1':
@@ -247,28 +256,20 @@ out = np.stack([X, Y], -1)
 out = list(map(tuple, out.tolist()))
 seen = set()
 seen_add = seen.add
-out = [x for x in out if not (x in seen or seen_add(x))][:3*numSampleRetrieve]
+out = [x for x in out if not (x in seen or seen_add(x))][:k*numSampleRetrieve]
 np.savetxt(dataDir + args.indices+'CandidateSet'+str(len_indices), np.array(out), fmt='%d,%d')
 indices_out = [i for i in out if i not in indices]
-from statistics import mean
 def evaluate(matches, ranklist):
     myset = set(matches)
-    ranks = []
     count = 0
     last = -1
     for idx, i in enumerate(ranklist):
         if i in myset:
             count += 1
-            ranks.append(count/(idx+1))
-            last = idx+1
-    if count>0:
-        print("Recall", count/len(matches), "Num Matches", len(matches), "Retrieved", count, "All", len(ranklist))
-    else:
-        print("Recall", count/len(matches), "AP", 0)
+    print("Recall", count/len(matches), "Num Matches", len(matches), "Retrieved", count, "All", len(ranklist))
 matches = dataset.matches
 matches = list(map(tuple, matches))
 evaluate(matches, out)
-# random.shuffle(indices_out)
 torch.set_grad_enabled(True)
 model.train()
 optimizer = AdamW([{'params': model.transformer.parameters(), 'lr':3e-5},
@@ -294,11 +295,11 @@ temperature = torch.Tensor([args.temperature]).cuda()
 dataset.indices = indices
 dataset.mode = 'train'
 dataset.labels = np.zeros_like(indices)
-loader = DataLoader(dataset, batch_size=16, shuffle=False, collate_fn = collate_fn)
+loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn = collate_fn)
 for (x, _) in loader:
     out.extend(torch.softmax(model(x)/temperature, -1).cpu().numpy())
 out = np.array(out)
 entropy = -(out[:, 0]*np.log(out[:, 0]) + out[:, 1]*np.log(out[:, 1]))
 ent_indices = np.argsort(entropy)[::-1]
-data = indices[ent_indices[:128]]
+data = indices[ent_indices[:LB]]
 np.savetxt(dataDir + args.out, data, fmt='%d,%d')
