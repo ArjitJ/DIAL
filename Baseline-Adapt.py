@@ -165,8 +165,6 @@ def collate_fn(batch):
     return xbatch, target
 
 class RobertaClassificationHead(nn.Module):
-    """Head for sentence-level classification tasks."""
-
     def __init__(self, numlabel=2):
         super().__init__()
         self.dense = nn.Linear(768, 768)

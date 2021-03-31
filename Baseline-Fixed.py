@@ -165,8 +165,6 @@ def collate_fn(batch):
     return xbatch, target
 
 class RobertaClassificationHead(nn.Module):
-    """Head for sentence-level classification tasks."""
-
     def __init__(self, numlabel=2):
         super().__init__()
         self.dense = nn.Linear(768, 768)
@@ -203,9 +201,6 @@ train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, collate_
 criterion = nn.CrossEntropyLoss()
 numEpochs = 20
 model = Model().cuda()
-
-# optimizer = AdamW(model.parameters(), lr=3e-5)
-
 model.eval()
 torch.set_grad_enabled(False)
 xEmbeddings = []

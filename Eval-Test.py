@@ -9,7 +9,7 @@ import pandas as pd
 from transformers import AdamW
 from torch.utils.data import DataLoader
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
-from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaForMaskedLM, get_linear_schedule_with_warmup
+from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaModel, get_linear_schedule_with_warmup
 from dataloader import MyDataset
 
 config = RobertaConfig(
@@ -23,7 +23,7 @@ tokenizer = RobertaTokenizer.from_pretrained("roberta-base", max_len=512)
 
 torch.manual_seed(0)
 np.random.seed(0)
-
+LB = 128
 parser = argparse.ArgumentParser()
 parser.add_argument("--model_init", type=str, default='roberta-base')
 parser.add_argument("--indices", type=str, default=['initial_indices.txt'], nargs='*', action='store')
@@ -111,8 +111,6 @@ def collate_fn(batch):
     return xbatch, target
 
 class RobertaClassificationHead(nn.Module):
-    """Head for sentence-level classification tasks."""
-
     def __init__(self, numlabel=2):
         super().__init__()
         self.dense = nn.Linear(768, 768)
@@ -130,18 +128,16 @@ class RobertaClassificationHead(nn.Module):
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
-        self.transformer = RobertaForMaskedLM(config=config)
-#         print(self.transformer.load_state_dict(torch.load(args.model_init+"/pytorch_model.bin"), strict=False))
-        self.transformer.load_state_dict(torch.load(args.model_init+"/pytorch_model.bin"), strict=False)
+        self.transformer = RobertaModel(config=config).from_pretrained('roberta-base', config=config)
         self.transformer.train()
         self.fc = RobertaClassificationHead()
-        for param in self.transformer.roberta.parameters():
+        for param in self.transformer.parameters():
             param.requires_grad = True
         
     def forward(self, x):
         x = x.cuda()
         attn_x = (x != tokenizer.pad_token_id).float().cuda()
-        embed_x = self.transformer.roberta(input_ids = x, attention_mask=attn_x)[0]
+        embed_x = self.transformer(input_ids = x, attention_mask=attn_x)[0]
         embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
         return self.fc(embed_x)
 
@@ -151,7 +147,7 @@ numEpochs = 20
 for i in range(10):
     out = np.loadtxt(dataDir + args.indices[0] +'CandidateSet'+str(i+1), delimiter=',').astype(int)
     dataset.mode = 'train'
-    dataset.indices = indices_all[:256 + (128*i)]
+    dataset.indices = indices_all[:2*LB + (LB*i)]
     dataset.labels = np.array([1 if pair in dataset.matches else 0 for pair in dataset.indices.tolist()])
     train_loader = DataLoader(dataset, batch_size=args.batch_size, shuffle=True, collate_fn = collate_fn)
     

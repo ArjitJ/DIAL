@@ -39,6 +39,8 @@ dataDir = None
 numSampleRetrieve = None
 k=3
 LB = 128
+BATCH_SIZE = 16
+MASK_PROB = 0.5
 if args.data == 'walmart_amazon_exp':
     datasetColumns = ['title', 'category', 'brand', 'modelno', 'price']
     dataDir = 'data/walmart_amazon_exp/'
@@ -169,7 +171,7 @@ def paired_collate_fn(batch):
 class RobertaClassificationHead(nn.Module):
     def __init__(self, numlabel=2):
         super().__init__()
-        self.bitmask = (torch.rand((1, 768)) < 0.5).float().cuda()
+        self.bitmask = (torch.rand((1, 768)) < MASK_PROB).float().cuda()
         self.bitmask.requires_grad = False
         self.dense = nn.Linear(768, 768)
 
@@ -232,12 +234,10 @@ class Model(nn.Module):
 
 paireddataset = MyPairedDataset(dataDir, indices, tokenizer, datasetColumns)
 dataset = MyPositiveDataset(dataDir, indices, tokenizer, datasetColumns)
-negdataset = MyNegativeDataset(dataDir, indices, tokenizer, datasetColumns)
 randomdataset = MyRandomDataset(dataDir, indices, tokenizer, datasetColumns)
-train_loader = DataLoader(dataset, batch_size=16, shuffle=True, collate_fn = collate_fn)
-neg_loader = DataLoader(negdataset, batch_size=16, shuffle=True, collate_fn = collate_fn, drop_last=True)
-random_loader = DataLoader(randomdataset, batch_size=16, shuffle=True, collate_fn = collate_fn)
-paired_loader = DataLoader(paireddataset, batch_size=16, shuffle=True, collate_fn = paired_collate_fn)
+train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn)
+random_loader = DataLoader(randomdataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn)
+paired_loader = DataLoader(paireddataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = paired_collate_fn)
 def sim(x, y):
     return -((x-y)**2).sum(dim=-1)
 def criterion(u, v, rand_u, rand_v):
@@ -272,8 +272,6 @@ for epoch in range(numEpochs):
         label = label.long().cuda()
         classification_loss = 0
         contrastive_loss = 0
-        diversity_loss_x = 0
-        diversity_loss_y = 0
         B = embeddings_x[0].shape[0]
         for i in range(numEmbeddings):
             u = embeddings_x[i]
@@ -292,8 +290,8 @@ torch.set_grad_enabled(False)
 xEmbeddings = []
 for i in range(numEmbeddings):
     xEmbeddings.append([])
-for idx in range(0, len(dataset.xexamples), 16):
-    x = dataset.xexamples[idx:idx+16]
+for idx in range(0, len(dataset.xexamples), BATCH_SIZE):
+    x = dataset.xexamples[idx:idx+BATCH_SIZE]
     x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
     attn_x = (x != tokenizer.pad_token_id).float().cuda()
     embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
@@ -307,8 +305,8 @@ xEmb = torch.stack(xEmbeddings).cpu().numpy()
 xEmbeddings = []
 for i in range(numEmbeddings):
     xEmbeddings.append([])
-for idx in range(0, len(dataset.yexamples), 16):
-    x = dataset.yexamples[idx:idx+16]
+for idx in range(0, len(dataset.yexamples), BATCH_SIZE):
+    x = dataset.yexamples[idx:idx+BATCH_SIZE]
     x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
     attn_x = (x != tokenizer.pad_token_id).float().cuda()
     embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
@@ -374,7 +372,7 @@ model.eval()
 paireddataset.indices = indices
 paireddataset.mode = 'train'
 paireddataset.labels = np.zeros_like(indices)
-loader = DataLoader(paireddataset, batch_size=16, shuffle=False, collate_fn = paired_collate_fn)
+loader = DataLoader(paireddataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn = paired_collate_fn)
 out = []
 for (x, _) in loader:
     out.extend(torch.softmax(model.forward_paired(x), -1).cpu().numpy())
