@@ -182,7 +182,7 @@ class RobertaClassificationHead(nn.Module):
 class Model(nn.Module):
     def __init__(self):
         super(Model, self).__init__()
-        self.transformer = RobertaForMaskedLM(config=config)
+        self.transformer = RobertaModel(config=config)
         self.transformer.train()
         self.fc = RobertaClassificationHead()
         for param in self.transformer.parameters():
