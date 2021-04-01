@@ -236,7 +236,6 @@ negdataset = MyNegativeDataset(dataDir, indices, tokenizer, datasetColumns)
 randomdataset = MyRandomDataset(dataDir, indices, tokenizer, datasetColumns)
 train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn)
 unpaired_loader = DataLoader(unpaireddataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn)
-neg_loader = DataLoader(negdataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn, drop_last=True)
 random_loader = DataLoader(randomdataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn)
 paired_loader = DataLoader(paireddataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = paired_collate_fn)
 def sim(x, y):
