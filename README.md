@@ -4,13 +4,15 @@ Implementation of
 
 - Deep Indexed Active Learning for Matching Heterogeneous Entity Representations
 
-![](Images/TraditionalAL.png)
+![](Images/TraditionalAL.PNG)
+
 Traditional methods for Active Learning Pairwise classification tasks follow a pipeline as described: 
 In each iteration, the learning algorithm (learner) learns a matcher (shown in an ellipse which we use to denote model components) from labeled data 𝑇,
 the labeled pairs collected from the (human) labeler so far, while the example selector (selector) chooses the most informative unlabeled
 pairs to acquire labels for. After including the new labels into 𝑇, the process repeats until we learn a matcher of sufficient quality.
 
-![](Images/DIAL.png)
+![](Images/DIAL.PNG)
+
 Our proposed integrated matcher-blocker combination and new AL workflow as shown. Compared to the previous diagram, the two most notable differences are 
 1) the blocker (dashed box) is now part of the AL feedback loop, and 
 2) the matcher is a component within the blocker. 
