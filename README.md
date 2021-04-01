@@ -40,7 +40,6 @@ conda create -n DIAL_env
 conda activate DIAL_env
 conda install -y -c conda-forge -c pytorch pytorch==1.6 cudatoolkit=10.2
 pip install faiss-cpu transformers scikit-learn pandas 
-
 ```
 
 Use run_expts.sh to replicate experiments from the paper. Example 
@@ -66,7 +65,6 @@ To run experiments with the multilingual dataset,
 ```
 cd MultiLingual
 bash run_multilingual_expts.sh DIAL-Multilingual
-
 ```
 
 References:
