@@ -265,7 +265,6 @@ for epoch in range(pairedEpochs):
 optimizer = AdamW(model.fc.parameters(), lr=1e-3)
 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps = len(train_loader) * numEpochs)
 for epoch in range(numEpochs):
-    negdataloader_iterator = iter(neg_loader)
     for (x, y, label), (randx, randy, rand_label) in zip(train_loader, random_loader):
         embeddings_x, embeddings_y = model.forward_unpaired(x, y)
         random_embeddings_x, random_embeddings_y = model.forward_unpaired(randx, randy)
