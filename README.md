@@ -28,6 +28,11 @@ This code has been tested on a machine with 64 2.10GHz Intel Xeon Silver 4216 CP
 The first step is to get the data. We provide the data used in DeepMatcher experiments ([Link1](https://github.com/anhaidgroup/deepmatcher/blob/master/Datasets.md) [Link2](https://dbs.uni-leipzig.de/en/research/projects/object_matching/benchmark_datasets_for_entity_resolution) [Link3](https://sites.google.com/site/anhaidgroup/useful-stuff/data)) 
 The multilingual data can be downloaded from [salesforce/localization-xml-mt](https://github.com/salesforce/localization-xml-mt)
 
+```
+cd MultiLingual
+git clone https://github.com/salesforce/localization-xml-mt.git
+```
+
 Now create a virtual environment using conda
 
 ```
