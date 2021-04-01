@@ -25,7 +25,8 @@ This code has been tested on a machine with 64 2.10GHz Intel Xeon Silver 4216 CP
 
 ### Reproducing the Experiments
 
-The first step is to get the data. We provide the data used in DeepMatcher experiments. The multilingual data can be downloaded from [salesforce/localization-xml-mt](https://github.com/salesforce/localization-xml-mt)
+The first step is to get the data. We provide the data used in DeepMatcher experiments ([Link1](https://github.com/anhaidgroup/deepmatcher/blob/master/Datasets.md) [Link2](https://dbs.uni-leipzig.de/en/research/projects/object_matching/benchmark_datasets_for_entity_resolution) [Link3](https://sites.google.com/site/anhaidgroup/useful-stuff/data)) 
+The multilingual data can be downloaded from [salesforce/localization-xml-mt](https://github.com/salesforce/localization-xml-mt)
 
 Now create a virtual environment using conda
 
@@ -41,7 +42,16 @@ Use run_expts.sh to replicate experiments from the paper. Example
 
 ```
 bash run_expts.sh DIAL amazon_google_exp 
+```
 
+To evaluate on Test, run
+
+```
+bash run_eval.sh Eval-Test DIAL amazon_google_exp 
+```
+and to evaluated on All Pairs, run
+```
+bash run_eval.sh Eval-AllPairs DIAL amazon_google_exp 
 ```
 
 Currently supports : Walmart-Amazon, Amazon-Google, DBLP-ACM, DLBP-Google Scholar, Abt-Buy
@@ -53,3 +63,9 @@ cd MultiLingual
 bash run_multilingual_expts.sh DIAL-Multilingual
 
 ```
+
+References:
+1. https://github.com/megagonlabs/ditto
+2. https://github.com/brunnurs/entity-matching-transformer
+3. https://github.com/anhaidgroup/deepmatcher
+4. https://github.com/JordanAsh/badge
