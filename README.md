@@ -30,7 +30,10 @@ The first step is to get the data. We provide the data used in DeepMatcher exper
 Now create a virtual environment using conda
 
 ```
-conda env create -n DIAL_env -f environment.yml
+conda create -n DIAL_env
+conda activate DIAL_env
+conda install -y -c conda-forge -c pytorch pytorch==1.6 cudatoolkit=10.2
+pip install faiss-cpu transformers scikit-learn pandas 
 
 ```
 
