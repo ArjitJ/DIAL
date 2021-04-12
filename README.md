@@ -2,7 +2,7 @@
 
 Implementation of
 
-- Deep Indexed Active Learning for Matching Heterogeneous Entity Representations
+- [Deep Indexed Active Learning for Matching Heterogeneous Entity Representations](https://arxiv.org/abs/2104.03986). Arjit Jain, Sunita Sarawagi, Prithviraj Sen
 
 <img src="Images/TraditionalAL.PNG" width="350" height="200">
 
@@ -65,6 +65,21 @@ To run experiments with the multilingual dataset,
 ```
 cd MultiLingual
 bash run_multilingual_expts.sh DIAL-Multilingual
+```
+
+## Citation
+
+If you use this code for your research, please consider citing our arXiv preprint
+
+```bibtex
+@misc{jain2021deep,
+      title={Deep Indexed Active Learning for Matching Heterogeneous Entity Representations}, 
+      author={Arjit Jain and Sunita Sarawagi and Prithviraj Sen},
+      year={2021},
+      eprint={2104.03986},
+      archivePrefix={arXiv},
+      primaryClass={cs.DB}
+}
 ```
 
 References:
