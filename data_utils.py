@@ -64,15 +64,12 @@ class MyPositiveDataset(MyDataset):
 class MyRandomDataset(MyDataset):
     def __init__(self, indices, xexamples, yexamples, matches):
         super(MyRandomDataset, self).__init__(indices, xexamples, yexamples, matches)
-        self.indices = self.indices[self.labels == 1]
+        mask = self.labels == 1
+        self.indices = self.indices[mask]
+        self.labels = self.labels[mask]*0
+        self.xexamples = copy.deepcopy(xexamples)
+        self.yexamples = copy.deepcopy(yexamples)
         
-    def __getitem__(self, i):
-        x = np.random.randint(len(self.xexamples))
-        y = np.random.randint(len(self.yexamples))
-        xexample = self.xexamples[x]
-        yexample = self.yexamples[y]
-        return torch.tensor(xexample, dtype=torch.long),  torch.tensor(yexample, dtype=torch.long),  0*self.labels[i]        
-
 class MyPairedDataset(MyDataset):
     def __init__(self, indices, xexamples, yexamples, matches, dataDir=None):
         super(MyPairedDataset, self).__init__(indices, xexamples, yexamples, matches)

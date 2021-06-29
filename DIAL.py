@@ -64,6 +64,8 @@ for active_learning_round in range(10):
     optimizer = AdamW(model.fc.parameters(), lr=1e-3)
     scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps = len(train_loader) * numEpochs)
     for epoch in range(numEpochs):
+        np.random.shuffle(random_loader.dataset.xexamples)
+        np.random.shuffle(random_loader.dataset.yexamples)
         for (r_p, s_p, _), (rand_r, rand_s, _) in zip(train_loader, random_loader):
             # single mode: get embeddings for positives and random negatives
             embeddings_r, embeddings_s = model.forward_unpaired(r_p, s_p)
