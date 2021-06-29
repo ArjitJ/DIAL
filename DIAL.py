@@ -106,9 +106,9 @@ for active_learning_round in range(10):
     Ds, Is = np.stack(Ds), np.stack(Is)
 
     sorted_indices = np.unravel_index(np.argsort(Ds.ravel()), Ds.shape)
-    S = sorted_indices[1]
-    R = Is[tuple([i for i in zip(sorted_indices)])][0]
-    out = map(tuple, np.stack([R, S], -1).tolist())
+    RetrievedS = sorted_indices[1]
+    RetrievedR = Is[tuple([i for i in zip(sorted_indices)])][0]
+    out = map(tuple, np.stack([RetrievedR, RetrievedS], -1).tolist())
     seen = set()
     retrieved_pairs = [x for x in out if not (x in seen or seen.add(x))][:k*numSampleRetrieve]
     np.savetxt(dataDir + args.indices+'CandidateSet'+str(len_indices), np.array(retrieved_pairs), fmt='%d,%d')
@@ -119,14 +119,15 @@ for active_learning_round in range(10):
     paireddataset.indices = candidate_set
     paireddataset.mode = 'train'
     paireddataset.labels = np.zeros_like(candidate_set)
-    loader = DataLoader(paireddataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn = paired_collate_fn)
+    loader = DataLoader(paireddataset, batch_size=256, shuffle=False, collate_fn = paired_collate_fn)
     out = []
     for (x, _) in loader:
         out.extend(torch.softmax(model.forward_paired(x), -1))
     out = torch.stack(out).cpu().numpy()
-    entropy = -(out[:, 0]*np.log(out[:, 0]) + out[:, 1]*np.log(out[:, 1]))
-    ent_indices = np.argsort(entropy)[::-1]
-    data = candidate_set[ent_indices[:LB]]
+    entropy = -(out*np.log(out)).sum(-1)
+    ent_indices = np.argpartition(entropy, -LB)[-LB:]
+    ent_indices = ent_indices[np.argsort(entropy[ent_indices])][::-1]
+    data = candidate_set[ent_indices]
     indices = np.concatenate([indices, data], axis=0)
     evaluate(matches, retrieved_pairs)
     torch.set_grad_enabled(True)
