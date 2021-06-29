@@ -1,6 +1,4 @@
 import argparse
-from collections import defaultdict
-import random
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -8,19 +6,12 @@ import faiss
 from torch.nn.utils.rnn import pad_sequence
 import numpy as np
 import pandas as pd
-from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaModel, get_linear_schedule_with_warmup
+from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaModel, get_linear_schedule_with_warmup, logging
 from torch.utils.data import DataLoader
-from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
 from dataloader import MyDataset, get_tokenized
+logging.set_verbosity_error()
 
-config = RobertaConfig(
-    vocab_size=50265,
-    max_position_embeddings=514,
-    num_attention_heads=12,
-    num_hidden_layers=6,
-    type_vocab_size=1,
-)
-
+config = RobertaConfig(vocab_size=50265, max_position_embeddings=514, num_attention_heads=12, num_hidden_layers=6, type_vocab_size=1)
 tokenizer = RobertaTokenizer.from_pretrained("roberta-base", max_len=512)
 
 parser = argparse.ArgumentParser()
@@ -35,10 +26,12 @@ args = parser.parse_args()
 datasetColumns = None
 dataDir = None
 numSampleRetrieve = None
-k=3
+k = 3
 LB = 128
 BATCH_SIZE = 16
 MASK_PROB = 0.5
+numEpochs = 200
+pairedEpochs = 20
 
 
 if args.data == 'walmart_amazon_exp':
@@ -66,7 +59,6 @@ else:
     exit(1)
 
 
-
 torch.manual_seed(0)
 np.random.seed(0)
 indices = np.loadtxt(dataDir + args.indices, delimiter=',').astype(int)
@@ -77,7 +69,7 @@ class MyPairedDataset(MyDataset):
     def __init__(self, indices, xexamples, yexamples, matches):
         super(MyPairedDataset, self).__init__(indices, xexamples, yexamples, matches)
         self.mode = 'train'
-        self.test = np.loadtxt(file_path + 'test.txt', delimiter=',').astype(int)
+        self.test = np.loadtxt(dataDir + 'test.txt', delimiter=',').astype(int)
         
     def __len__(self):
         if self.mode == 'train':
@@ -114,13 +106,6 @@ class MyPositiveDataset(MyDataset):
         mask = self.labels == 1
         self.indices = self.indices[mask]
         self.labels = self.labels[mask]
-
-class MyNegativeDataset(MyDataset):
-    def __init__(self, indices, xexamples, yexamples, matches):
-        super(MyNegativeDataset, self).__init__(indices, xexamples, yexamples, matches)
-        mask = self.labels == 0
-        self.indices = self.indices[mask]
-        self.labels = self.labels[mask]
         
 class MyRandomDataset(MyDataset):
     def __init__(self, indices, xexamples, yexamples, matches):
@@ -141,11 +126,6 @@ def _tensorize_batch(examples):
     if are_tensors_same_length:
         return torch.stack(examples, dim=0)
     else:
-        if tokenizer._pad_token is None:
-            raise ValueError(
-                "You are attempting to pad samples but the tokenizer you are using"
-                f" ({self.tokenizer.__class__.__name__}) does not have one."
-            )
         return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
 def collate_fn(batch):
@@ -153,13 +133,13 @@ def collate_fn(batch):
     target = torch.Tensor(target)
     x = _tensorize_batch(x)
     y = _tensorize_batch(y)
-    return xbatch, ybatch, target
+    return x, y, target
 
 def paired_collate_fn(batch):
     x, target = zip(*batch)
     target = torch.Tensor(target)
-    xbatch = _tensorize_batch(x)
-    return xbatch, target
+    x = _tensorize_batch(x)
+    return x, target
 
 class RobertaClassificationHead(nn.Module):
     def __init__(self, numlabel=2):
@@ -226,7 +206,7 @@ class Model(nn.Module):
         return self.fc_paired(x)
 
     
-xexamples, yexamples, matches = get_tokenized(file_path, tokenizer, datasetColumns)
+xexamples, yexamples, matches = get_tokenized(dataDir, tokenizer, datasetColumns)
 paireddataset = MyPairedDataset(indices, xexamples, yexamples, matches)
 dataset = MyPositiveDataset(indices, xexamples, yexamples, matches)
 randomdataset = MyRandomDataset(indices, xexamples, yexamples, matches)
@@ -243,8 +223,6 @@ def criterion(u, v, rand_u, rand_v):
 
 CE = nn.CrossEntropyLoss()
 
-numEpochs = 200
-pairedEpochs = 20
 model = Model(numEmbeddings).cuda()
 
 paired_optimizer = AdamW([{'params': model.transformer.parameters(), 'lr':3e-5},
@@ -260,15 +238,12 @@ for epoch in range(pairedEpochs):
         paired_optimizer.step()
         paired_scheduler.step()
 
-
 optimizer = AdamW(model.fc.parameters(), lr=1e-3)
 scheduler = get_linear_schedule_with_warmup(optimizer, num_warmup_steps=0, num_training_steps = len(train_loader) * numEpochs)
 for epoch in range(numEpochs):
-    for (x, y, label), (randx, randy, rand_label) in zip(train_loader, random_loader):
+    for (x, y, _), (randx, randy, _) in zip(train_loader, random_loader):
         embeddings_x, embeddings_y = model.forward_unpaired(x, y)
         random_embeddings_x, random_embeddings_y = model.forward_unpaired(randx, randy)
-        label = label.long().cuda()
-        classification_loss = 0
         contrastive_loss = 0
         B = embeddings_x[0].shape[0]
         for i in range(numEmbeddings):
@@ -285,39 +260,29 @@ for epoch in range(numEpochs):
 
 model.eval()
 torch.set_grad_enabled(False)
-xEmbeddings = []
-for i in range(numEmbeddings):
-    xEmbeddings.append([])
-for idx in range(0, len(xexamples), BATCH_SIZE):
-    x = xexamples[idx:idx+BATCH_SIZE]
-    x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
-    attn_x = (x != tokenizer.pad_token_id).float().cuda()
-    embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
-    embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
-    for i in range(numEmbeddings):
-        xEmbeddings[i].extend(model.fc[i](embed_x))
-for i in range(numEmbeddings):
-    xEmbeddings[i] = torch.stack(xEmbeddings[i])
-xEmb = torch.stack(xEmbeddings).cpu().numpy()
 
-xEmbeddings = []
-for i in range(numEmbeddings):
-    xEmbeddings.append([])
-for idx in range(0, len(yexamples), BATCH_SIZE):
-    x = yexamples[idx:idx+BATCH_SIZE]
-    x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
-    attn_x = (x != tokenizer.pad_token_id).float().cuda()
-    x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
-    x = (x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
+def getEmbeddings(lst):
+    xEmbeddings = []
     for i in range(numEmbeddings):
-        xEmbeddings[i].extend(model.fc[i](x))
-for i in range(numEmbeddings):
-    xEmbeddings[i] = torch.stack(xEmbeddings[i])
-yEmb = torch.stack(xEmbeddings).cpu().numpy()
-del xEmbeddings
+        xEmbeddings.append([])
+    for idx in range(0, len(lst), BATCH_SIZE):
+        x = lst[idx:idx+BATCH_SIZE]
+        x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
+        attn_x = (x != tokenizer.pad_token_id).float().cuda()
+        x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
+        x = (x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
+        for i in range(numEmbeddings):
+            xEmbeddings[i].extend(model.fc[i](x))
+    for i in range(numEmbeddings):
+        xEmbeddings[i] = torch.stack(xEmbeddings[i])
+    return torch.stack(xEmbeddings).cpu().numpy()
+
+xEmb = getEmbeddings(xexamples)
+yEmb = getEmbeddings(yexamples)
 if args.norm:
     xEmb = xEmb/np.linalg.norm(xEmb, axis=-1)[:, :, np.newaxis]
     yEmb = yEmb/np.linalg.norm(yEmb, axis=-1)[:, :, np.newaxis]
+
 Ds = []
 Is = []
 if args.method == 'l2':
