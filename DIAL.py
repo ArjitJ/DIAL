@@ -11,9 +11,7 @@ import pandas as pd
 from transformers import AdamW, RobertaConfig, RobertaTokenizer, RobertaModel, get_linear_schedule_with_warmup
 from torch.utils.data import DataLoader
 from sklearn.metrics import confusion_matrix, roc_auc_score, f1_score
-from dataloader import MyDataset
-from itertools import cycle
-from statistics import mean
+from dataloader import MyDataset, get_tokenized
 
 config = RobertaConfig(
     vocab_size=50265,
@@ -41,6 +39,8 @@ k=3
 LB = 128
 BATCH_SIZE = 16
 MASK_PROB = 0.5
+
+
 if args.data == 'walmart_amazon_exp':
     datasetColumns = ['title', 'category', 'brand', 'modelno', 'price']
     dataDir = 'data/walmart_amazon_exp/'
@@ -74,8 +74,8 @@ numEmbeddings = args.numEmbeddings
 len_indices = len(indices)//LB
 
 class MyPairedDataset(MyDataset):
-    def __init__(self, file_path, indices, tokenizer, datasetColumns):
-        super(MyPairedDataset, self).__init__(file_path, indices, tokenizer, datasetColumns)
+    def __init__(self, indices, xexamples, yexamples, matches):
+        super(MyPairedDataset, self).__init__(indices, xexamples, yexamples, matches)
         self.mode = 'train'
         self.test = np.loadtxt(file_path + 'test.txt', delimiter=',').astype(int)
         
@@ -109,22 +109,22 @@ class MyPairedDataset(MyDataset):
         return torch.tensor(input_tokens, dtype=torch.long), lbl
 
 class MyPositiveDataset(MyDataset):
-    def __init__(self, file_path, indices, tokenizer, datasetColumns):
-        super(MyPositiveDataset, self).__init__(file_path, indices, tokenizer, datasetColumns)
+    def __init__(self, indices, xexamples, yexamples, matches):
+        super(MyPositiveDataset, self).__init__(indices, xexamples, yexamples, matches)
         mask = self.labels == 1
         self.indices = self.indices[mask]
         self.labels = self.labels[mask]
 
 class MyNegativeDataset(MyDataset):
-    def __init__(self, file_path, indices, tokenizer, datasetColumns):
-        super(MyNegativeDataset, self).__init__(file_path, indices, tokenizer, datasetColumns)
+    def __init__(self, indices, xexamples, yexamples, matches):
+        super(MyNegativeDataset, self).__init__(indices, xexamples, yexamples, matches)
         mask = self.labels == 0
         self.indices = self.indices[mask]
         self.labels = self.labels[mask]
         
 class MyRandomDataset(MyDataset):
-    def __init__(self, file_path, indices, tokenizer, datasetColumns):
-        super(MyRandomDataset, self).__init__(file_path, indices, tokenizer, datasetColumns)
+    def __init__(self, indices, xexamples, yexamples, matches):
+        super(MyRandomDataset, self).__init__(indices, xexamples, yexamples, matches)
         self.indices = self.indices[self.labels == 1]
         
     def __getitem__(self, i):
@@ -149,23 +149,16 @@ def _tensorize_batch(examples):
         return pad_sequence(examples, batch_first=True, padding_value=tokenizer.pad_token_id)
 
 def collate_fn(batch):
-    x = [item[0] for item in batch]
-    y = [item[1] for item in batch]
-    target = [item[2] for item in batch]
+    x, y, target = zip(*batch)
     target = torch.Tensor(target)
-    
-    xbatch = _tensorize_batch(x)
-    ybatch = _tensorize_batch(y)
-    
+    x = _tensorize_batch(x)
+    y = _tensorize_batch(y)
     return xbatch, ybatch, target
 
 def paired_collate_fn(batch):
-    x = [item[0] for item in batch]
-    target = [item[1] for item in batch]
+    x, target = zip(*batch)
     target = torch.Tensor(target)
-    
     xbatch = _tensorize_batch(x)
-    
     return xbatch, target
 
 class RobertaClassificationHead(nn.Module):
@@ -213,14 +206,14 @@ class Model(nn.Module):
             y = y.cuda()
             attn_x = (x != tokenizer.pad_token_id).float().cuda()
             attn_y = (y != tokenizer.pad_token_id).float().cuda()
-            embed_x = self.transformer(input_ids = x, attention_mask=attn_x)[0]
-            embed_y = self.transformer(input_ids = y, attention_mask=attn_y)[0]
-            embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
-            embed_y = (embed_y*attn_y.unsqueeze(-1)).sum(1)/attn_y.unsqueeze(-1).sum(1)
+            x = self.transformer(input_ids = x, attention_mask=attn_x)[0]
+            y = self.transformer(input_ids = y, attention_mask=attn_y)[0]
+            x = (x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
+            y = (y*attn_y.unsqueeze(-1)).sum(1)/attn_y.unsqueeze(-1).sum(1)
         embeddings_x = []
         embeddings_y = []
         for i in range(self.numEmbeddings):
-            u, v = self.fc[i](embed_x), self.fc[i](embed_y)
+            u, v = self.fc[i](x), self.fc[i](y)
             embeddings_x.append(u)
             embeddings_y.append(v)
         return embeddings_x, embeddings_y
@@ -228,20 +221,25 @@ class Model(nn.Module):
     def forward_paired(self, x):
         x = x.cuda()
         attn_x = (x != tokenizer.pad_token_id).float().cuda()
-        embed_x = self.transformer(input_ids = x, attention_mask=attn_x)[0]
-        embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
-        return self.fc_paired(embed_x)
+        x = self.transformer(input_ids = x, attention_mask=attn_x)[0]
+        x = (x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
+        return self.fc_paired(x)
 
-paireddataset = MyPairedDataset(dataDir, indices, tokenizer, datasetColumns)
-dataset = MyPositiveDataset(dataDir, indices, tokenizer, datasetColumns)
-randomdataset = MyRandomDataset(dataDir, indices, tokenizer, datasetColumns)
+    
+xexamples, yexamples, matches = get_tokenized(file_path, tokenizer, datasetColumns)
+paireddataset = MyPairedDataset(indices, xexamples, yexamples, matches)
+dataset = MyPositiveDataset(indices, xexamples, yexamples, matches)
+randomdataset = MyRandomDataset(indices, xexamples, yexamples, matches)
 train_loader = DataLoader(dataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn)
 random_loader = DataLoader(randomdataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = collate_fn)
 paired_loader = DataLoader(paireddataset, batch_size=BATCH_SIZE, shuffle=True, collate_fn = paired_collate_fn)
+
 def sim(x, y):
     return -((x-y)**2).sum(dim=-1)
+
 def criterion(u, v, rand_u, rand_v):
-    return sim(u,v).mean() - torch.log(sim(u,v).exp().sum() + sim(u,rand_v).exp().sum() + sim(rand_u,v).exp().sum() + sim(rand_u,rand_v).exp().sum())
+    pos = sim(u,v)
+    return pos.mean() - torch.log(pos.exp().sum() + sim(u,rand_v).exp().sum() + sim(rand_u,v).exp().sum() + sim(rand_u,rand_v).exp().sum())
 
 CE = nn.CrossEntropyLoss()
 
@@ -252,6 +250,7 @@ model = Model(numEmbeddings).cuda()
 paired_optimizer = AdamW([{'params': model.transformer.parameters(), 'lr':3e-5},
                   {'params':model.fc_paired.parameters()}], lr=1e-3)
 paired_scheduler = get_linear_schedule_with_warmup(paired_optimizer, num_warmup_steps=0, num_training_steps = len(paired_loader) * pairedEpochs)
+
 for epoch in range(pairedEpochs):
     for (x, label) in paired_loader:
         pred = model.forward_paired(x)
@@ -289,8 +288,8 @@ torch.set_grad_enabled(False)
 xEmbeddings = []
 for i in range(numEmbeddings):
     xEmbeddings.append([])
-for idx in range(0, len(dataset.xexamples), BATCH_SIZE):
-    x = dataset.xexamples[idx:idx+BATCH_SIZE]
+for idx in range(0, len(xexamples), BATCH_SIZE):
+    x = xexamples[idx:idx+BATCH_SIZE]
     x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
     attn_x = (x != tokenizer.pad_token_id).float().cuda()
     embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
@@ -304,14 +303,14 @@ xEmb = torch.stack(xEmbeddings).cpu().numpy()
 xEmbeddings = []
 for i in range(numEmbeddings):
     xEmbeddings.append([])
-for idx in range(0, len(dataset.yexamples), BATCH_SIZE):
-    x = dataset.yexamples[idx:idx+BATCH_SIZE]
+for idx in range(0, len(yexamples), BATCH_SIZE):
+    x = yexamples[idx:idx+BATCH_SIZE]
     x = _tensorize_batch([torch.tensor(i, dtype=torch.long) for i in x]).cuda()
     attn_x = (x != tokenizer.pad_token_id).float().cuda()
-    embed_x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
-    embed_x = (embed_x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
+    x = model.transformer(input_ids = x, attention_mask=attn_x)[0]
+    x = (x*attn_x.unsqueeze(-1)).sum(1)/attn_x.unsqueeze(-1).sum(1)
     for i in range(numEmbeddings):
-        xEmbeddings[i].extend(model.fc[i](embed_x))
+        xEmbeddings[i].extend(model.fc[i](x))
 for i in range(numEmbeddings):
     xEmbeddings[i] = torch.stack(xEmbeddings[i])
 yEmb = torch.stack(xEmbeddings).cpu().numpy()
@@ -358,7 +357,6 @@ indices_out = [i for i in out if i not in indices]
 def evaluate(matches, ranklist):
     myset = set(matches)
     count = 0
-    last = -1
     for idx, i in enumerate(ranklist):
         if i in myset:
             count += 1
@@ -374,8 +372,8 @@ paireddataset.labels = np.zeros_like(indices)
 loader = DataLoader(paireddataset, batch_size=BATCH_SIZE, shuffle=False, collate_fn = paired_collate_fn)
 out = []
 for (x, _) in loader:
-    out.extend(torch.softmax(model.forward_paired(x), -1).cpu().numpy())
-out = np.array(out)
+    out.extend(torch.softmax(model.forward_paired(x), -1))
+out = torch.stack(out).cpu().numpy()
 entropy = -(out[:, 0]*np.log(out[:, 0]) + out[:, 1]*np.log(out[:, 1]))
 ent_indices = np.argsort(entropy)[::-1]
 data = indices[ent_indices[:LB]]
