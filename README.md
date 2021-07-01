@@ -42,10 +42,11 @@ conda install -y -c conda-forge -c pytorch pytorch==1.6 cudatoolkit=10.2
 pip install faiss-cpu transformers scikit-learn pandas 
 ```
 
-Use run_expts.sh to replicate experiments from the paper. Example 
+Use run_single.sh to run DIAL, and run_expts.sh to replicate baseline experiments from the paper. Example 
 
 ```
-bash run_expts.sh DIAL amazon_google_exp 
+bash run_single.sh DIAL amazon_google_exp 
+bash run_expts.sh Baseline-Adapt amazon_google_exp 
 ```
 
 To evaluate on Test, run
