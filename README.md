@@ -58,7 +58,7 @@ and to evaluated on All Pairs, run
 bash run_eval.sh Eval-AllPairs DIAL amazon_google_exp 
 ```
 
-Currently supports : Walmart-Amazon, Amazon-Google, DBLP-ACM, DLBP-Google Scholar, Abt-Buy
+Currently supports : Walmart-Amazon, Amazon-Google, DBLP-ACM, DBLP-Google Scholar, Abt-Buy
 
 To run experiments with the multilingual dataset, 
 
